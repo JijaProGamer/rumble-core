@@ -41,85 +41,44 @@ function convertBitrateAbbreviatedNumber([number, bitrateAbbrevation]) {
 }
 
 import gaxios from "gaxios"
-//import * as cheerio from "cheerio"
-import { JSDOM, ResourceLoader, VirtualConsole } from "jsdom"
+import * as cheerio from "cheerio"
+import { PassThrough } from "stream"
+import HLS from 'hls-parser';
 
-import { writeFileSync } from "fs"
+class ProgressPassThrough extends PassThrough {
+    constructor(options) {
+        super(options);
+        this.downloaded = 0;
+        this.totalSize = 0;
+    }
+
+    write(chunk, encoding, callback) {
+        this.downloaded += chunk.length;
+        this.emit('progress', chunk, this.totalSize, (this.downloaded / this.totalSize) * 100);
+
+        return super.write(chunk, encoding, callback);
+    }
+}
+
 const rumble_core = fetchVideo
 
 async function fetchVideo(videoURL, options = {}) {
-    throw new Error("Video fetch isn't implemented yet.")
+    const info = await rumble_core.getInfo(videoURL)
+
+    return rumble_core.downloadFromInfo(info);
 }
 
-/*rumble_core.getInfo = async function(videoURL, options={
-    lang: "en",
-    requestOptions: {},
-    requestCallback: () => {},
-}){
-    let videoHTML = await gaxios.request({
-        url: videoURL,
+async function getVideoFormatInfo(videoID, options) {
+    let url = `https://rumble.com/embedJS/u3/?request=video&ver=2&v=${videoID}&ext=%7B%22ad_count%22%3Anull%7D&ad_wt=112`
+
+    const response = await gaxios.request({
+        url: url,
         method: "GET",
         ...options.requestOptions
-    })
-
-    options.requestCallback(videoHTML);
-
-    let $ = cheerio.load(videoHTML.data);
-
-    let descriptionElements = $(".media-description");
-    let description = ""
-
-    descriptionElements.find('p').each(function() {
-        description += $(this).text() + ' \n';
     });
 
-    let tagElements = $(".media-description-tags-container");
-    let tags = []
-
-    tagElements.find('a').each(function() {
-        tags.push({
-            content: $(this).text().trim(),
-            href: $(this).attr("href")
-        })
-    });
-
-    let resolutionElements = $("div > div:nth-child(4) > div:nth-child(3) > div:nth-child(8) > div:nth-child(2) > ul:nth-child(3)");
-    let resolutions = []
-
-    resolutionElements.find('li').each(function() {
-        let resolutionText = $(this).find(":nth-child(2)")[0].text().trim().split(", ");
-
-        resolutionText[0] = resolutionText[0].split("x");
-        resolutionText[1] = resolutionText[0].split(" ");
-
-        resolutions.push({
-            resolution: {width: parseInt(resolutionText[0][1]), height: parseInt(resolutionText[0][1])},
-            bitrate: convertBitrateAbbreviatedNumber(resolutionText)
-        })
-    });
-
-    return {
-        video: {
-            title: $("div.video-header-container > h1").text().trim(),
-            description: description.trim(),
-            likes: convertAbbreviatedNumber($("button.rumbles-vote-pill-up.rumblers-vote-pill-button > span").text()),
-            dislikes: convertAbbreviatedNumber($("button.rumbles-vote-pill-down.rumblers-vote-pill-button > span").text()),
-            views: convertAbbreviatedNumber($("div.media-description-time-views-container > div.media-description-info-views").text().trim()),
-            uploadDate: new Date($("div.media-description-info-stream-time > div").attr("title")),
-            tags: tags,
-            contentURL: $("video").attr("src"),
-            resolutions: resolutions,
-        },
-        uploader: {
-            name: $("div.media-by-channel-container > a > div > div.media-heading-name-wrapper > div").text().trim(),
-            followers: convertAbbreviatedNumber($("div.media-by-channel-container > a > div > div.media-heading-num-followers").text().trim().split("\t")[0]),
-            //image: 
-            url: $("div.media-by-channel-container > a").attr("href").trim()
-        }
-
-        //description: ,
-    }
-};*/
+    return response.data;
+}
 
 rumble_core.getInfo = async function (videoURL, options = {
     lang: "en",
@@ -147,116 +106,149 @@ rumble_core.getInfo = async function (videoURL, options = {
     });
 
     options.requestCallback(response);
+    const videoFormatInfo = await getVideoFormatInfo(response.data.match(/"video":"(.*?)"/)[1], options);
 
-    let htmlData = response.data.replace('<video', '<div class="video"')
-                    .replace('</video>', '</div>')
+    const $ = cheerio.load(response.data)
 
-    const vConsole = new VirtualConsole();
-    const dom = new JSDOM(htmlData, {
-        url: videoURL,
-        referrer: "https://google.com/",
-        contentType: "text/html",
-        includeNodeLocations: false,
-        storageQuota: 10000000,
-        runScripts: "dangerously",
-        virtualConsole: vConsole,
-        resources: new ResourceLoader({
-            //proxy: "http://127.0.0.1:9001",
-            strictSSL: true,
-            userAgent: (options.requestOptions.headers || {})["User-Agent"] || userAgent,
-        }),
-        pretendToBeVisual: true,
-        userAgent: (options.requestOptions.headers || {})["User-Agent"] || userAgent
+    let descriptionElements = $(".media-description");
+    let description = ""
+
+    descriptionElements.find('p').each(function () {
+        $(this).find("button").remove();
+        $(this).find("br").replaceWith('\n');
+
+        description += $(this).html() + ' \n';
     });
 
-    const document = dom.window.document;
+    let tagElements = $(".media-description-tags-container");
+    let tags = []
 
-    await new Promise(resolve => {
-        dom.window.onload = () => {
-            resolve();
-        };
-    });
-
-    const descriptionElements = document.querySelectorAll(".media-description");
-    let description = "";
-
-    descriptionElements.forEach(element => {
-        if (element.tagName !== "P") return;
-
-        description += element.textContent + ' \n';
-    });
-
-    const tagElements = document.querySelector(".media-description-tags-container");
-    const tags = [];
-
-    tagElements.querySelectorAll("a").forEach(element => {
+    tagElements.find('a').each(function () {
         tags.push({
-            content: element.textContent.trim(),
-            href: element.getAttribute("href")
-        });
+            text: $(this).text().trim(),
+            url: $(this).attr("href")
+        })
     });
 
-    const resolutionElements = document.querySelector("div > div:nth-child(4) > div:nth-child(3) > div:nth-child(8) > div:nth-child(2) > ul:nth-child(3)");
-    const resolutions = [];
+    let formats = Object.values(videoFormatInfo.ua.mp4).map((v) => {
+        return {
+            url: v.url,
+            bitrate: v.meta.bitrate / 1000,
+            size: v.meta.size / 100000,
+            height: v.meta.h,
+            width: v.meta.w
+        }
+    })
 
-    /*writeFileSync("sucka.html", dom.serialize())
-
-    await new Promise(resolve => {
-        let interval = setInterval(() => {
-            console.log(document.querySelector(`#vid_undefined > div`))
-            if(document.querySelector(`div[class="video"]`)){
-                clearInterval(interval);
-                resolve()
-            }
-        }, 100)
-    });*/
-
-    /*resolutionElements.querySelectorAll("li").forEach(element => {
-        const resolutionText = element.querySelector(":nth-child(2)").textContent.trim().split(", ");
-
-        resolutionText[0] = resolutionText[0].split("x");
-        resolutionText[1] = resolutionText[1].split(" ");
-
-        resolutions.push({
-            resolution: { width: parseInt(resolutionText[0][1]), height: parseInt(resolutionText[0][0]) },
-            bitrate: convertBitrateAbbreviatedNumber(resolutionText)
+    if (formats.length == 0) {
+        let hlsResponse = await gaxios.request({
+            url: videoFormatInfo.u.hls.url,
+            method: "GET",
+            ...options.requestOptions
         });
-    });*/
+
+        options.requestCallback(hlsResponse);
+
+        let HLSData = HLS.parse(await hlsResponse.data.text());
+
+        formats = HLSData.variants.map((v) => {
+            return {
+                url: v.uri,
+                bitrate: v.bandwidth / 1.0e+6,
+
+                height: v.resolution.height,
+                width: v.resolution.width
+            }
+        })
+    }
 
     let result = {
         video: {
-            title: document.querySelector("div.video-header-container > h1").textContent.trim(),
+            publicID: videoURL.split("-")[0].split("/").pop(),
+            privateID: response.data.match(/"video":"(.*?)"/)[1],
+            pageURL: videoFormatInfo.l,
+            livestream_has_dvr: videoFormatInfo.livestream_has_dvr,
+            own: videoFormatInfo.own,
+            title: videoFormatInfo.title,
             description: description.trim(),
-            likes: convertAbbreviatedNumber(document.querySelector("button.rumbles-vote-pill-up.rumblers-vote-pill-button > span").textContent),
-            dislikes: convertAbbreviatedNumber(document.querySelector("button.rumbles-vote-pill-down.rumblers-vote-pill-button > span").textContent),
-            views: convertAbbreviatedNumber(document.querySelector("div.media-description-time-views-container > div.media-description-info-views").textContent.trim()),
-            uploadDate: new Date(document.querySelector("div.media-description-info-stream-time > div").getAttribute("title")),
+            likes: convertAbbreviatedNumber($("button.rumbles-vote-pill-up.rumblers-vote-pill-button > span").text()),
+            dislikes: convertAbbreviatedNumber($("button.rumbles-vote-pill-down.rumblers-vote-pill-button > span").text()),
+            views: convertAbbreviatedNumber($("div.media-description-time-views-container > div.media-description-info-views").text().trim()),
+            uploadDate: new Date(videoFormatInfo.pubDate),
+            duration: videoFormatInfo.duration,
+            live: videoFormatInfo.live > 0,
             tags: tags,
-            //contentURL: document.querySelector(".video").getAttribute("src"),
-            //resolutions: resolutions,
+            thumbnails: (videoFormatInfo.t || []).map((v) => {
+                return {
+                    url: v.i,
+                    height: v.h,
+                    width: v.w
+                }
+            }),
+            formats: formats,
+            timeline: videoFormatInfo.ua.timeline && {
+                url: videoFormatInfo.ua.timeline["180"].url,
+                bitrate: videoFormatInfo.ua.timeline["180"].meta.bitrate / 1000,
+                size: videoFormatInfo.ua.timeline["180"].meta.size / 1000,
+                height: videoFormatInfo.ua.timeline["180"].meta.h,
+                width: videoFormatInfo.ua.timeline["180"].meta.w,
+            }
         },
-        uploader: {
-            name: document.querySelector("div.media-by-channel-container > a > div > div.media-heading-name-wrapper > div").textContent.trim(),
-            followers: convertAbbreviatedNumber(document.querySelector("div.media-by-channel-container > a > div > div.media-heading-num-followers").textContent.trim().split("\t")[0]),
+        author: {
+            name: videoFormatInfo.author.name,
+            followers: convertAbbreviatedNumber($("div.media-by-channel-container > a > div > div.media-heading-num-followers").text().trim().split("\t")[0]),
             // image:
-            url: document.querySelector("div.media-by-channel-container > a").getAttribute("href").trim()
+            url: videoFormatInfo.author.url
         }
     };
-
-    dom.window.close();
 
     return result;
 };
 
-rumble_core.downloadFromInfo = async function (videoURL, options = {}) {
-    throw new Error("Video fetch isn't implemented yet.")
+rumble_core.downloadFromInfo = async function (info, options = {}) {
+    console.log(info)
+    if(info.video.live){
+        throw new Error("Downloading live video not supported yet.")
+    }
+
+    options = {
+        begin: info.video.live ? Date.now() : 0,
+        range: { start: 0, end: 0 },
+        //highWaterMark: 512 * 1024, // disabled for now
+        //IPv6Block: "2001:2::/48", // disabled for now
+        ...options,
+    }
+
+    if (options.range.end == 0) {
+        let headerResponse = (await gaxios.request({
+            url: [...info.video.formats].sort((a, b) => a.width < b.width).pop().url,
+            method: "HEAD"
+        }))
+
+        options.range.end = parseInt(headerResponse.headers['content-length'])
+    }
+
+    let response = await gaxios.request({
+        url: [...info.video.formats].sort((a, b) => a.width < b.width).pop().url,
+        responseType: 'stream',
+        headers: {
+            Range: `bytes=${options.range.start}-${options.range.end}`,
+            ["User-Agent"]: userAgent,
+        }
+    })
+
+    const progressStream = new ProgressPassThrough()
+    progressStream.totalSize = parseInt(response.headers['content-length']);
+    response.data.pipe(progressStream)
+
+    return progressStream;
 };
 
-rumble_core.chooseFormat = function (formats, options = "videoandaudio") {
+/*rumble_core.chooseFormat = function (formats, options = "videoandaudio") {
     if (!["videoandaudio", "audioandvideo", "video", "audio", "videoonly", "audioonly"].includes(options)) {
         throw new Error(`Options can only be "videoandaudio", "audioandvideo, "video", "audio", "videoonly" or "audioonly".`);
     }
-}
+}*/
 
 rumble_core.validateURL = function (url) {
 
