@@ -2,7 +2,7 @@ import rumble from "./index.js"
 import { createWriteStream } from "fs"
 
 //let testVideo = "v343twz" // video
-let testVideo = "https://rumble.com/v4di6lc-lofi-hip-hop-radio-beats-to-relax-and-study.html" // live
+let testVideo = "https://rumble.com/v4ffitz-saturday-warzone-craziness-rumbletakeover.html" // live
 
 let filePipe = createWriteStream("testFile.mp4")
 

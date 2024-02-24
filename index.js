@@ -47,7 +47,7 @@ class ProgressPassThrough extends PassThrough {
     write(chunk, encoding, callback) {
         this.downloaded += chunk.length;
 
-        if(this.totalSize > 0){
+        if (this.totalSize > 0) {
             let progress = (this.downloaded / this.totalSize) * 100;
             this.emit('progress', chunk, this.totalSize, progress);
         } else {
@@ -227,7 +227,7 @@ rumble_core.downloadFromInfo = async function (info, options = {}) {
     options = {
         begin: info.video.live ? Date.now() : 0,
         range: { start: 0, end: 0 },
-        liveFetchInterval: 500,
+        liveFetchInterval: 2000,
         liveTimeoutDuration: 10000,
         //highWaterMark: 512 * 1024, // disabled for now
         //IPv6Block: "2001:2::/48", // disabled for now
@@ -261,7 +261,7 @@ rumble_core.downloadFromInfo = async function (info, options = {}) {
     const progressStream = new ProgressPassThrough();
     let response;
 
-    if(!info.video.live){
+    if (!info.video.live) {
         response = await gaxios.request({
             url: formatChosen.url,
             responseType: 'stream',
@@ -272,9 +272,9 @@ rumble_core.downloadFromInfo = async function (info, options = {}) {
         response.data.on("end", () => {
             progressStream.emit("end")
         })
-    
+
         progressStream.totalSize = parseInt(response.headers['content-length']);
-        response.data.pipe(progressStream, {end: false})
+        response.data.pipe(progressStream, { end: false })
     } else {
         let liveURL = formatChosen.url.split("/");
         liveURL.pop();
@@ -286,51 +286,51 @@ rumble_core.downloadFromInfo = async function (info, options = {}) {
         let lastID;
 
         let livestreamFetchInterval = setInterval(async () => {
-            if((Date.now() - lastDownloaded) > options.liveTimeoutDuration){
+            if ((Date.now() - lastDownloaded) > options.liveTimeoutDuration) {
                 progressStream.emit("end")
 
                 clearInterval(livestreamFetchInterval);
                 return;
             }
 
-            if(isDownloading) return;
-            if((Date.now() - lastPool) > options.liveFetchInterval){
+            if (isDownloading) return;
+            if ((Date.now() - lastPool) > options.liveFetchInterval) {
                 lastPool = Date.now();
 
                 let livestreamFragments = await getLivestreamSegments(formatChosen.url, options);
-                livestreamFragments = livestreamFragments.map((v) => {return {
-                    duration: v.duration,
-                    start: new Date(info.video.uploadDate.getTime() + v.mediaSequenceNumber * v.duration * 1000),
-                    url: `${liveURL}/${v.uri}`,
-                    id: v.uri,
-                }})
+                livestreamFragments = livestreamFragments.map((v) => {
+                    return {
+                        duration: v.duration,
+                        start: new Date(info.video.uploadDate.getTime() + v.mediaSequenceNumber * v.duration * 1000),
+                        url: `${liveURL}/${v.uri}`,
+                        id: v.uri,
+                    }
+                })
 
                 let lastFragment = livestreamFragments[livestreamFragments.length - 1]
 
-                if(lastID == lastFragment.id){
+                if (lastID == lastFragment.id) {
                     return;
                 }
 
                 isDownloading = true;
                 lastID = lastFragment.id;
 
-                try {
-                    response = await gaxios.request({
-                        url: lastFragment.url,
-                        responseType: 'stream',
-                        headers: headers,
-                        signal: abortController.signal
-                    })
-    
+                response = gaxios.request({
+                    url: lastFragment.url,
+                    responseType: 'stream',
+                    headers: headers,
+                    signal: abortController.signal
+                }).then((response) => {
                     response.data.on("end", () => {
                         isDownloading = false;
                         lastDownloaded = Date.now()
                     })
-                
-                    response.data.pipe(progressStream, {end: false})
-                } catch(err) {
+
+                    response.data.pipe(progressStream, { end: false })
+                }).catch((err) => {
                     isDownloading = false;
-                }
+                })
             }
         }, 250)
     }
