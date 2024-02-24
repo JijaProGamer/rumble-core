@@ -1,6 +1,6 @@
 {
   "name": "rumble-core",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "Rumble video downloader, and page scraper in javascript.",
   "main": "index.js",
   "type": "module",
