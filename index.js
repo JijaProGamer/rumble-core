@@ -31,15 +31,6 @@ function convertAbbreviatedNumber(abbreviatedString) {
     return numericValue * multiplier;
 }
 
-function convertBitrateAbbreviatedNumber([number, bitrateAbbrevation]) {
-    const abbreviations = {
-        "kbps": 0.001,
-        "mbps": 1
-    };
-
-    return abbreviations[bitrateAbbrevation] * parseFloat(number);
-}
-
 import gaxios from "gaxios"
 import * as cheerio from "cheerio"
 import { PassThrough } from "stream"
@@ -50,13 +41,25 @@ class ProgressPassThrough extends PassThrough {
         super(options);
         this.downloaded = 0;
         this.totalSize = 0;
+        this.abortController = null;
     }
 
     write(chunk, encoding, callback) {
         this.downloaded += chunk.length;
-        this.emit('progress', chunk, this.totalSize, (this.downloaded / this.totalSize) * 100);
+
+        if(this.totalSize > 0){
+            let progress = (this.downloaded / this.totalSize) * 100;
+            this.emit('progress', chunk, this.totalSize, progress);
+        } else {
+            this.emit('progress', chunk, null, null);
+        }
 
         return super.write(chunk, encoding, callback);
+    }
+
+    _destroy(error, callback) {
+        this.abortController.abort(error)
+        callback(error)
     }
 }
 
@@ -80,11 +83,20 @@ async function getVideoFormatInfo(videoID, options) {
     return response.data;
 }
 
+async function getLivestreamSegments(videoURL, options) {
+    const response = await gaxios.request({
+        url: videoURL,
+        method: "GET",
+        ...options.requestOptions
+    });
+
+    return HLS.parse(await response.data.text()).segments;
+}
+
 rumble_core.getInfo = async function (videoURL, options = {
     lang: "en",
     requestOptions: {},
-    requestCallback: () => { },
-    referrer: "https://www.google.com"
+    requestCallback: () => { }
 }) {
     options = {
         lang: "en",
@@ -99,9 +111,15 @@ rumble_core.getInfo = async function (videoURL, options = {
         },
     }
 
+    let videoID = rumble_core.getVideoID(videoURL);
+    videoURL = `https://rumble.com/${videoID}`;
+
     const response = await gaxios.request({
         url: videoURL,
         method: "GET",
+        headers: {
+            ["Accept-Language"]: options.lang || "en"
+        },
         ...options.requestOptions
     });
 
@@ -206,53 +224,148 @@ rumble_core.getInfo = async function (videoURL, options = {
 };
 
 rumble_core.downloadFromInfo = async function (info, options = {}) {
-    console.log(info)
-    if(info.video.live){
-        throw new Error("Downloading live video not supported yet.")
-    }
-
     options = {
         begin: info.video.live ? Date.now() : 0,
         range: { start: 0, end: 0 },
+        liveFetchInterval: 500,
+        liveTimeoutDuration: 10000,
         //highWaterMark: 512 * 1024, // disabled for now
         //IPv6Block: "2001:2::/48", // disabled for now
         ...options,
     }
 
-    if (options.range.end == 0) {
-        let headerResponse = (await gaxios.request({
-            url: [...info.video.formats].sort((a, b) => a.width < b.width).pop().url,
-            method: "HEAD"
-        }))
-
-        options.range.end = parseInt(headerResponse.headers['content-length'])
+    let formatChosen = rumble_core.chooseFormat(info.video.formats, options);
+    if (!formatChosen) {
+        throw new Error("No compatible format found.");
     }
 
-    let response = await gaxios.request({
-        url: [...info.video.formats].sort((a, b) => a.width < b.width).pop().url,
-        responseType: 'stream',
-        headers: {
-            Range: `bytes=${options.range.start}-${options.range.end}`,
-            ["User-Agent"]: userAgent,
-        }
-    })
+    let headers = {
+        ["User-Agent"]: userAgent,
+        ["Accept-Language"]: "en"
+    }
 
-    const progressStream = new ProgressPassThrough()
-    progressStream.totalSize = parseInt(response.headers['content-length']);
-    response.data.pipe(progressStream)
+    if (!info.video.live) {
+        if (options.range.end == 0) {
+            let headerResponse = (await gaxios.request({
+                url: formatChosen.url,
+                method: "HEAD"
+            }))
+
+            options.range.end = parseInt(headerResponse.headers['content-length'])
+        }
+
+        headers["Range"] = `bytes=${options.range.start}-${options.range.end}`
+    }
+
+    const abortController = new AbortController();
+    const progressStream = new ProgressPassThrough();
+    let response;
+
+    if(!info.video.live){
+        response = await gaxios.request({
+            url: formatChosen.url,
+            responseType: 'stream',
+            headers: headers,
+            signal: abortController.signal,
+        })
+
+        response.data.on("end", () => {
+            progressStream.emit("end")
+        })
+    
+        progressStream.totalSize = parseInt(response.headers['content-length']);
+        response.data.pipe(progressStream, {end: false})
+    } else {
+        let liveURL = formatChosen.url.split("/");
+        liveURL.pop();
+        liveURL = liveURL.join("/")
+
+        let lastDownloaded = Date.now();
+        let lastPool = Date.now() - options.liveFetchInterval;
+        let isDownloading = false;
+        let lastID;
+
+        let livestreamFetchInterval = setInterval(async () => {
+            if((Date.now() - lastDownloaded) > options.liveTimeoutDuration){
+                progressStream.emit("end")
+
+                clearInterval(livestreamFetchInterval);
+                return;
+            }
+
+            if(isDownloading) return;
+            if((Date.now() - lastPool) > options.liveFetchInterval){
+                lastPool = Date.now();
+
+                let livestreamFragments = await getLivestreamSegments(formatChosen.url, options);
+                livestreamFragments = livestreamFragments.map((v) => {return {
+                    duration: v.duration,
+                    start: new Date(info.video.uploadDate.getTime() + v.mediaSequenceNumber * v.duration * 1000),
+                    url: `${liveURL}/${v.uri}`,
+                    id: v.uri,
+                }})
+
+                let lastFragment = livestreamFragments[livestreamFragments.length - 1]
+
+                if(lastID == lastFragment.id){
+                    return;
+                }
+
+                isDownloading = true;
+                lastID = lastFragment.id;
+
+                try {
+                    response = await gaxios.request({
+                        url: lastFragment.url,
+                        responseType: 'stream',
+                        headers: headers,
+                        signal: abortController.signal
+                    })
+    
+                    response.data.on("end", () => {
+                        isDownloading = false;
+                        lastDownloaded = Date.now()
+                    })
+                
+                    response.data.pipe(progressStream, {end: false})
+                } catch(err) {
+                    isDownloading = false;
+                }
+            }
+        }, 250)
+    }
+
+    progressStream.emit("info", info, formatChosen)
+    progressStream.abortController = abortController;
 
     return progressStream;
 };
 
-/*rumble_core.chooseFormat = function (formats, options = "videoandaudio") {
-    if (!["videoandaudio", "audioandvideo", "video", "audio", "videoonly", "audioonly"].includes(options)) {
-        throw new Error(`Options can only be "videoandaudio", "audioandvideo, "video", "audio", "videoonly" or "audioonly".`);
+rumble_core.chooseFormat = function (formats, options = {}) {
+    options = {
+        quality: "highest",
+        ...options
     }
-}*/
 
-rumble_core.validateURL = function (url) {
+    if (options.format) {
+        return options.format;
+    }
 
+    if (!options.filter) {
+        if (options.quality == "highest") {
+            options.filter = (a, b) => a.width - b.width;
+        }
+
+        if (options.quality == "lowest") {
+            options.filter = (a, b) => b.width - a.width;
+        }
+    }
+
+    return [...formats].sort(options.filter).pop();
 }
 
-rumble_core.version = "1.0.0"
+rumble_core.getVideoID = function (url) {
+    return url.split("/").pop().split("-").shift()
+}
+
 export default rumble_core
