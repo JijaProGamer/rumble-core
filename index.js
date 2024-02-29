@@ -31,10 +31,10 @@ function convertAbbreviatedNumber(abbreviatedString) {
     return numericValue * multiplier;
 }
 
-import gaxios from "gaxios"
-import * as cheerio from "cheerio"
-import { PassThrough } from "stream"
-import HLS from 'hls-parser';
+let gaxios = require("gaxios")
+let cheerio = require("cheerio")
+let HLS = require("hls-parser")
+let { PassThrough } = require("stream")
 
 class ProgressPassThrough extends PassThrough {
     constructor(options) {
@@ -393,4 +393,4 @@ rumble_core.getVideoID = function (url) {
     return url.split("/").pop().split("-").shift()
 }
 
-export default rumble_core
+module.exports = rumble_core

@@ -1,9 +1,8 @@
 {
   "name": "rumble-core",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Rumble video downloader, and page scraper in javascript.",
   "main": "index.js",
-  "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },

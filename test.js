@@ -1,9 +1,9 @@
-import rumble from "./index.js"
-import { createWriteStream } from "fs"
+let { createWriteStream } = require("fs")
+let rumble = require("./index.js")
 
 //let testVideo = "v343twz" // video
 //let testVideo = "https://rumble.com/v1heynx-lofi-hip-hop-radio-beats-to-relaxstudy-to.html" // live 24/7
-let testVideo = "https://rumble.com/v4fkhn2-time-for-a-crusade-chivalry-2-livestream.html" // fast paced live, temporary
+let testVideo = "https://rumble.com/v4fz7n3-trickle-truth.html" // fast paced live, temporary
 
 let filePipe = createWriteStream("testFile.mp4")
 
