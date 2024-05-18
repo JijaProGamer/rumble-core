@@ -1,6 +1,6 @@
 {
   "name": "rumble-core",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "description": "Rumble video downloader, and page scraper in javascript.",
   "main": "index.js",
   "scripts": {
@@ -27,6 +27,7 @@
   "dependencies": {
     "cheerio": "^1.0.0-rc.12",
     "gaxios": "^6.3.0",
+    "he": "^1.2.0",
     "hls-parser": "^0.10.8"
   }
 }

@@ -3,15 +3,15 @@ let rumble = require("./index.js")
 
 //let testVideo = "v343twz" // video
 //let testVideo = "https://rumble.com/v1heynx-lofi-hip-hop-radio-beats-to-relaxstudy-to.html" // live 24/7
-let testVideo = "https://rumble.com/v4fz7n3-trickle-truth.html" // fast paced live, temporary
+let testVideo = "v3ojoy2" // fast paced live, temporary
 
 let filePipe = createWriteStream("testFile.mp4")
 
 rumble.getInfo(testVideo)
 .then(async (result) => {
-    //console.log(result.video);
+    console.log(result);
 
-    let stream = await rumble.downloadFromInfo(result, {
+    /*let stream = await rumble.downloadFromInfo(result, {
         quality: "highest"
     });
 
@@ -21,6 +21,6 @@ rumble.getInfo(testVideo)
     .on("end", () => {
         //console.log("End downloading");
     })
-    .pipe(process.stdout)
+    .pipe(process.stdout)*/
     //.pipe(filePipe)
 })

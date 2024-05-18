@@ -16,7 +16,8 @@ function convertAbbreviatedNumber(abbreviatedString) {
     const match = abbreviatedString.match(/^(\d+(\.\d+)?)\s*([KMB])?$/i);
 
     if (!match) {
-        throw new Error("Invalid format");
+        //throw new Error("Invalid format");
+        return null
     }
 
     const [, number, , abbreviation] = match;
@@ -34,6 +35,7 @@ function convertAbbreviatedNumber(abbreviatedString) {
 let gaxios = require("gaxios")
 let cheerio = require("cheerio")
 let HLS = require("hls-parser")
+let he = require("he")
 let { PassThrough } = require("stream")
 
 class ProgressPassThrough extends PassThrough {
@@ -187,11 +189,11 @@ rumble_core.getInfo = async function (videoURL, options = {
             pageURL: videoFormatInfo.l,
             livestream_has_dvr: videoFormatInfo.livestream_has_dvr,
             own: videoFormatInfo.own,
-            title: videoFormatInfo.title,
-            description: description.trim(),
+            title: he.decode(videoFormatInfo.title),
+            description: he.decode(description.trim()),
             likes: convertAbbreviatedNumber($("button.rumbles-vote-pill-up.rumblers-vote-pill-button > span").text()),
             dislikes: convertAbbreviatedNumber($("button.rumbles-vote-pill-down.rumblers-vote-pill-button > span").text()),
-            views: convertAbbreviatedNumber($("div.media-description-time-views-container > div.media-description-info-views").text().trim()),
+            views: convertAbbreviatedNumber($("div.media-description-time-views-container > div.media-description-info-views").text().trim() || $("div.live-video-view-count-status-count").text().trim()),
             uploadDate: new Date(videoFormatInfo.pubDate),
             duration: videoFormatInfo.duration,
             live: videoFormatInfo.live > 0,
